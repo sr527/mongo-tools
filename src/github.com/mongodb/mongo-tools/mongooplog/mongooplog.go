@@ -61,7 +61,14 @@ func (self *MongoOplog) Run() error {
 	doc := &Oplog{}
 	res := map[string]interface{}{}
 	for tail.Next(doc) {
-		if err := adminDB.Run(bson.M{"applyOps": []Oplog{*doc}}, &res); err != nil {
+
+		if doc.Operation == "n" {
+			continue
+		}
+
+		opsToApply := []Oplog{*doc}
+
+		if err := adminDB.Run(bson.M{"applyOps": opsToApply}, &res); err != nil {
 			return fmt.Errorf("error applying ops: %v", err)
 		}
 	}
