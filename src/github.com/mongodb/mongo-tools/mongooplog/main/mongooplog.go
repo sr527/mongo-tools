@@ -56,6 +56,7 @@ func main() {
 
 	// create a session provider for the source server
 	opts.Connection.Host = sourceOpts.From
+	opts.Connection.Port = ""
 	sessionProviderFrom, err := db.InitSessionProvider(*opts)
 	if err != nil {
 		fmt.Printf("error connecting to source host: %v\n", err)
