@@ -10,24 +10,22 @@ import (
 	"testing"
 )
 
-func TestJSONArrayImportDocument(t *testing.T) {
+func TestJSONArrayReadDocument(t *testing.T) {
 	Convey("With a JSON array import input", t, func() {
-		var err error
+		readDocChan := make(chan bson.M, 1)
 		var jsonFile, fileHandle *os.File
+
 		Convey("an error should be thrown if a plain JSON document is supplied",
 			func() {
 				contents := `{"a": "ae"}`
-				So(err, ShouldBeNil)
-				_, err = NewJSONImportInput(true, bytes.NewReader([]byte(contents))).ImportDocument()
-				So(err, ShouldNotBeNil)
+				So(NewJSONInputReader(true, bytes.NewReader([]byte(contents))).ReadDocument(readDocChan), ShouldNotBeNil)
 			})
 
 		Convey("reading a JSON object that has no opening bracket should "+
 			"error out",
 			func() {
 				contents := `{"a":3},{"b":4}]`
-				_, err = NewJSONImportInput(true, bytes.NewReader([]byte(contents))).ImportDocument()
-				So(err, ShouldNotBeNil)
+				So(NewJSONInputReader(true, bytes.NewReader([]byte(contents))).ReadDocument(readDocChan), ShouldNotBeNil)
 			})
 
 		Convey("JSON arrays that do not end with a closing bracket should "+
@@ -35,10 +33,8 @@ func TestJSONArrayImportDocument(t *testing.T) {
 			func() {
 				contents := `[{"a": "ae"}`
 				fileHandle := bytes.NewReader([]byte(contents))
-				_, err = NewJSONImportInput(true, fileHandle).ImportDocument()
-				So(err, ShouldBeNil)
-				_, err = NewJSONImportInput(true, fileHandle).ImportDocument()
-				So(err, ShouldNotBeNil)
+				So(NewJSONInputReader(true, fileHandle).ReadDocument(readDocChan), ShouldBeNil)
+				So(NewJSONInputReader(true, fileHandle).ReadDocument(readDocChan), ShouldNotBeNil)
 			})
 
 		// TODO: we'll accept inputs like [[{},{}]] and just do nothing instead
@@ -47,8 +43,7 @@ func TestJSONArrayImportDocument(t *testing.T) {
 			func() {
 				fileHandle, err := os.Open("testdata/test_plain.json")
 				So(err, ShouldBeNil)
-				_, err = NewJSONImportInput(true, fileHandle).ImportDocument()
-				So(err, ShouldNotBeNil)
+				So(NewJSONInputReader(true, fileHandle).ReadDocument(readDocChan), ShouldNotBeNil)
 			})
 
 		Convey("array JSON input file sources should be parsed correctly and "+
@@ -59,13 +54,11 @@ func TestJSONArrayImportDocument(t *testing.T) {
 				expectedReadTwo := bson.M{"a": 2.4, "b": "string", "c": 52.9}
 				fileHandle, err := os.Open("testdata/test_array.json")
 				So(err, ShouldBeNil)
-				jsonImporter := NewJSONImportInput(true, fileHandle)
-				bsonDoc, err := jsonImporter.ImportDocument()
-				So(err, ShouldBeNil)
-				So(bsonDoc, ShouldResemble, expectedReadOne)
-				bsonDoc, err = jsonImporter.ImportDocument()
-				So(err, ShouldBeNil)
-				So(bsonDoc, ShouldResemble, expectedReadTwo)
+				jsonImporter := NewJSONInputReader(true, fileHandle)
+				So(jsonImporter.ReadDocument(readDocChan), ShouldBeNil)
+				So(<-readDocChan, ShouldResemble, expectedReadOne)
+				So(jsonImporter.ReadDocument(readDocChan), ShouldBeNil)
+				So(<-readDocChan, ShouldResemble, expectedReadTwo)
 			})
 
 		Reset(func() {
@@ -75,19 +68,20 @@ func TestJSONArrayImportDocument(t *testing.T) {
 	})
 }
 
-func TestJSONPlainImportDocument(t *testing.T) {
+func TestJSONPlainReadDocument(t *testing.T) {
 	Convey("With a plain JSON import input", t, func() {
 		var err error
+		readDocChan := make(chan bson.M, 1)
 		var jsonFile, fileHandle *os.File
+
 		Convey("string valued JSON documents should be imported properly",
 			func() {
 				contents := `{"a": "ae"}`
 				expectedRead := bson.M{"a": "ae"}
 				jsonFile, err = ioutil.TempFile("", "mongoimport_")
-				jsonImporter := NewJSONImportInput(false, bytes.NewReader([]byte(contents)))
-				bsonDoc, err := jsonImporter.ImportDocument()
-				So(err, ShouldBeNil)
-				So(bsonDoc, ShouldResemble, expectedRead)
+				jsonImporter := NewJSONInputReader(false, bytes.NewReader([]byte(contents)))
+				So(jsonImporter.ReadDocument(readDocChan), ShouldBeNil)
+				So(<-readDocChan, ShouldResemble, expectedRead)
 			})
 
 		Convey("several string valued JSON documents should be imported "+
@@ -95,31 +89,26 @@ func TestJSONPlainImportDocument(t *testing.T) {
 			contents := `{"a": "ae"}{"b": "dc"}`
 			expectedReadOne := bson.M{"a": "ae"}
 			expectedReadTwo := bson.M{"b": "dc"}
-			jsonImporter := NewJSONImportInput(false, bytes.NewReader([]byte(contents)))
-			bsonDoc, err := jsonImporter.ImportDocument()
-			So(err, ShouldBeNil)
-			So(bsonDoc, ShouldResemble, expectedReadOne)
-			bsonDoc, err = jsonImporter.ImportDocument()
-			So(err, ShouldBeNil)
-			So(bsonDoc, ShouldResemble, expectedReadTwo)
+			jsonImporter := NewJSONInputReader(false, bytes.NewReader([]byte(contents)))
+			So(jsonImporter.ReadDocument(readDocChan), ShouldBeNil)
+			So(<-readDocChan, ShouldResemble, expectedReadOne)
+			So(jsonImporter.ReadDocument(readDocChan), ShouldBeNil)
+			So(<-readDocChan, ShouldResemble, expectedReadTwo)
 		})
 
 		Convey("number valued JSON documents should be imported properly",
 			func() {
 				contents := `{"a": "ae", "b": 2.0}`
 				expectedRead := bson.M{"a": "ae", "b": 2.0}
-				jsonImporter := NewJSONImportInput(false, bytes.NewReader([]byte(contents)))
-				bsonDoc, err := jsonImporter.ImportDocument()
-				So(err, ShouldBeNil)
-				So(bsonDoc, ShouldResemble, expectedRead)
+				jsonImporter := NewJSONInputReader(false, bytes.NewReader([]byte(contents)))
+				So(jsonImporter.ReadDocument(readDocChan), ShouldBeNil)
+				So(<-readDocChan, ShouldResemble, expectedRead)
 			})
 
 		Convey("JSON arrays should return an error", func() {
 			contents := `[{"a": "ae", "b": 2.0}]`
-			jsonImporter := NewJSONImportInput(false, bytes.NewReader([]byte(contents)))
-			bsonDoc, err := jsonImporter.ImportDocument()
-			So(err, ShouldNotBeNil)
-			So(bsonDoc, ShouldBeNil)
+			jsonImporter := NewJSONInputReader(false, bytes.NewReader([]byte(contents)))
+			So(jsonImporter.ReadDocument(readDocChan), ShouldNotBeNil)
 		})
 
 		Convey("plain JSON input file sources should be parsed correctly and "+
@@ -129,13 +118,11 @@ func TestJSONPlainImportDocument(t *testing.T) {
 				expectedReadTwo := bson.M{"a": 5, "b": "string value", "c": 2}
 				fileHandle, err := os.Open("testdata/test_plain.json")
 				So(err, ShouldBeNil)
-				jsonImporter := NewJSONImportInput(false, fileHandle)
-				bsonDoc, err := jsonImporter.ImportDocument()
-				So(err, ShouldBeNil)
-				So(bsonDoc, ShouldNotResemble, expectedReadOne)
-				bsonDoc, err = jsonImporter.ImportDocument()
-				So(err, ShouldBeNil)
-				So(bsonDoc, ShouldNotResemble, expectedReadTwo)
+				jsonImporter := NewJSONInputReader(false, fileHandle)
+				So(jsonImporter.ReadDocument(readDocChan), ShouldBeNil)
+				So(<-readDocChan, ShouldNotResemble, expectedReadOne)
+				So(jsonImporter.ReadDocument(readDocChan), ShouldBeNil)
+				So(<-readDocChan, ShouldNotResemble, expectedReadTwo)
 			})
 
 		Reset(func() {
@@ -147,11 +134,11 @@ func TestJSONPlainImportDocument(t *testing.T) {
 
 func TestReadJSONArraySeparator(t *testing.T) {
 	Convey("With an array JSON import input", t, func() {
-		var err error
+		readDocChan := make(chan bson.M, 2)
 		Convey("reading a JSON array separator should consume [",
 			func() {
 				contents := `[{"a": "ae"}`
-				jsonImporter := NewJSONImportInput(true, bytes.NewReader([]byte(contents)))
+				jsonImporter := NewJSONInputReader(true, bytes.NewReader([]byte(contents)))
 				So(jsonImporter.readJSONArraySeparator(), ShouldBeNil)
 				// at this point it should have consumed all bytes up to `{`
 				So(jsonImporter.readJSONArraySeparator(), ShouldNotBeNil)
@@ -160,14 +147,14 @@ func TestReadJSONArraySeparator(t *testing.T) {
 			"corresponding opening bracket should error out ",
 			func() {
 				contents := `]`
-				jsonImporter := NewJSONImportInput(true, bytes.NewReader([]byte(contents)))
+				jsonImporter := NewJSONInputReader(true, bytes.NewReader([]byte(contents)))
 				So(jsonImporter.readJSONArraySeparator(), ShouldNotBeNil)
 			})
 		Convey("reading an opening JSON array separator without a "+
 			"corresponding closing bracket should error out ",
 			func() {
 				contents := `[`
-				jsonImporter := NewJSONImportInput(true, bytes.NewReader([]byte(contents)))
+				jsonImporter := NewJSONInputReader(true, bytes.NewReader([]byte(contents)))
 				So(jsonImporter.readJSONArraySeparator(), ShouldBeNil)
 				So(jsonImporter.readJSONArraySeparator(), ShouldNotBeNil)
 			})
@@ -175,7 +162,7 @@ func TestReadJSONArraySeparator(t *testing.T) {
 			"closing bracket should return EOF",
 			func() {
 				contents := `[]`
-				jsonImporter := NewJSONImportInput(true, bytes.NewReader([]byte(contents)))
+				jsonImporter := NewJSONInputReader(true, bytes.NewReader([]byte(contents)))
 				So(jsonImporter.readJSONArraySeparator(), ShouldBeNil)
 				So(jsonImporter.readJSONArraySeparator(), ShouldEqual, io.EOF)
 			})
@@ -183,7 +170,7 @@ func TestReadJSONArraySeparator(t *testing.T) {
 			"bracket but then additional characters after that, should error",
 			func() {
 				contents := `[]a`
-				jsonImporter := NewJSONImportInput(true, bytes.NewReader([]byte(contents)))
+				jsonImporter := NewJSONInputReader(true, bytes.NewReader([]byte(contents)))
 				So(jsonImporter.readJSONArraySeparator(), ShouldBeNil)
 				So(jsonImporter.readJSONArraySeparator(), ShouldNotBeNil)
 			})
@@ -191,27 +178,23 @@ func TestReadJSONArraySeparator(t *testing.T) {
 			"error out",
 			func() {
 				contents := `[{"a":3}x{"b":4}]`
-				jsonImporter := NewJSONImportInput(true, bytes.NewReader([]byte(contents)))
-				_, err = jsonImporter.ImportDocument()
-				So(err, ShouldBeNil)
+				jsonImporter := NewJSONInputReader(true, bytes.NewReader([]byte(contents)))
+				So(jsonImporter.ReadDocument(readDocChan), ShouldBeNil)
 				So(jsonImporter.readJSONArraySeparator(), ShouldNotBeNil)
 			})
 		Convey("reading invalid JSON objects after valid objects but between "+
 			"valid objects should error out",
 			func() {
 				contents := `[{"a":3},b{"b":4}]`
-				jsonImporter := NewJSONImportInput(true, bytes.NewReader([]byte(contents)))
-				_, err = jsonImporter.ImportDocument()
-				So(err, ShouldBeNil)
+				jsonImporter := NewJSONInputReader(true, bytes.NewReader([]byte(contents)))
+				So(jsonImporter.ReadDocument(readDocChan), ShouldBeNil)
 				So(jsonImporter.readJSONArraySeparator(), ShouldBeNil)
 				So(jsonImporter.readJSONArraySeparator(), ShouldNotBeNil)
 
 				contents = `[{"a":3},,{"b":4}]`
-				jsonImporter = NewJSONImportInput(true, bytes.NewReader([]byte(contents)))
-				_, err = jsonImporter.ImportDocument()
-				So(err, ShouldBeNil)
-				_, err = jsonImporter.ImportDocument()
-				So(err, ShouldNotBeNil)
+				jsonImporter = NewJSONInputReader(true, bytes.NewReader([]byte(contents)))
+				So(jsonImporter.ReadDocument(readDocChan), ShouldBeNil)
+				So(jsonImporter.ReadDocument(readDocChan), ShouldNotBeNil)
 			})
 	})
 }

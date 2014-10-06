@@ -11,9 +11,9 @@ import (
 	"strings"
 )
 
-// CSVImportInput is a struct that implements the ImportInput interface for a
+// CSVInputReader is a struct that implements the InputReader interface for a
 // CSV input source
-type CSVImportInput struct {
+type CSVInputReader struct {
 	// Fields is a list of field names in the BSON documents to be imported
 	Fields []string
 	// csvReader is the underlying reader used to read data in from the CSV
@@ -21,23 +21,27 @@ type CSVImportInput struct {
 	csvReader *csv.Reader
 	// numProcessed indicates the number of CSV documents processed
 	numProcessed int64
+	// csvRecord stores each line of input we read from the underlying reader
+	csvRecord []string
+	// document is used to hold the decoded JSON document as a bson.M
+	document bson.M
 }
 
-// NewCSVImportInput returns a CSVImportInput configured to read input from the
+// NewCSVInputReader returns a CSVInputReader configured to read input from the
 // given io.Reader, extracting the specified fields only.
-func NewCSVImportInput(fields []string, in io.Reader) *CSVImportInput {
+func NewCSVInputReader(fields []string, in io.Reader) *CSVInputReader {
 	csvReader := csv.NewReader(in)
 	// allow variable number of fields in document
 	csvReader.FieldsPerRecord = -1
 	csvReader.TrimLeadingSpace = true
-	return &CSVImportInput{
+	return &CSVInputReader{
 		Fields:    fields,
 		csvReader: csvReader,
 	}
 }
 
 // SetHeader sets the header field for a CSV
-func (csvImporter *CSVImportInput) SetHeader(hasHeaderLine bool) (err error) {
+func (csvImporter *CSVInputReader) SetHeader(hasHeaderLine bool) (err error) {
 	fields, err := validateHeaders(csvImporter, hasHeaderLine)
 	if err != nil {
 		return err
@@ -47,47 +51,48 @@ func (csvImporter *CSVImportInput) SetHeader(hasHeaderLine bool) (err error) {
 }
 
 // GetHeaders returns the current header fields for a CSV importer
-func (csvImporter *CSVImportInput) GetHeaders() []string {
+func (csvImporter *CSVInputReader) GetHeaders() []string {
 	return csvImporter.Fields
 }
 
 // ReadHeadersFromSource reads the header field from the CSV importer's reader
-func (csvImporter *CSVImportInput) ReadHeadersFromSource() ([]string, error) {
+func (csvImporter *CSVInputReader) ReadHeadersFromSource() ([]string, error) {
 	return csvImporter.csvReader.Read()
 }
 
-// ImportDocument reads a line of input with the CSV representation of a doc and
-// returns the BSON equivalent.
-func (csvImporter *CSVImportInput) ImportDocument() (bson.M, error) {
+// ReadDocument reads a line of input with the CSV representation of a document
+// and writes the BSON equivalent to the provided channel
+func (csvImporter *CSVInputReader) ReadDocument(readDocChan chan bson.M) (err error) {
 	csvImporter.numProcessed++
-	tokens, err := csvImporter.csvReader.Read()
+	csvImporter.csvRecord, err = csvImporter.csvReader.Read()
 	if err != nil {
 		if err == io.EOF {
-			return nil, err
+			return err
 		}
-		return nil, fmt.Errorf("read error on entry #%v: %v", csvImporter.numProcessed, err)
+		return fmt.Errorf("read error on entry #%v: %v", csvImporter.numProcessed, err)
 	}
-	log.Logf(2, "got line: %v", strings.Join(tokens, ","))
+	log.Logf(2, "got line: %v", strings.Join(csvImporter.csvRecord, ","))
 	var key string
-	document := bson.M{}
-	for index, token := range tokens {
+	csvImporter.document = bson.M{}
+	for index, token := range csvImporter.csvRecord {
 		parsedValue := getParsedValue(token)
 		if index < len(csvImporter.Fields) {
 			// for nested fields - in the form "a.b.c", ensure
 			// that the value is set accordingly
 			if strings.Contains(csvImporter.Fields[index], ".") {
-				setNestedValue(csvImporter.Fields[index], parsedValue, document)
+				setNestedValue(csvImporter.Fields[index], parsedValue, csvImporter.document)
 			} else {
-				document[csvImporter.Fields[index]] = parsedValue
+				csvImporter.document[csvImporter.Fields[index]] = parsedValue
 			}
 		} else {
 			key = "field" + strconv.Itoa(index)
 			if util.StringSliceContains(csvImporter.Fields, key) {
-				return document, fmt.Errorf("Duplicate header name - on %v - for token #%v ('%v') in document #%v",
+				return fmt.Errorf("Duplicate header name - on %v - for token #%v ('%v') in document #%v",
 					key, index+1, parsedValue, csvImporter.numProcessed)
 			}
-			document[key] = parsedValue
+			csvImporter.document[key] = parsedValue
 		}
 	}
-	return document, nil
+	readDocChan <- csvImporter.document
+	return nil
 }

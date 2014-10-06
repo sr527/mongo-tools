@@ -29,7 +29,7 @@ func main() {
 	}
 
 	log.SetVerbosity(opts.Verbosity)
-	
+
 	// print help, if specified
 	if opts.PrintHelp() {
 		return
@@ -59,15 +59,14 @@ func main() {
 	}
 
 	numDocs, err := importer.ImportDocuments()
+	if err != nil {
+		log.Logf(0, "error importing documents: %v", err)
+	}
 	if !opts.Quiet {
 		message := fmt.Sprintf("imported 1 document")
 		if numDocs != 1 {
 			message = fmt.Sprintf("imported %v documents", numDocs)
 		}
 		log.Logf(0, message)
-	}
-	if err != nil {
-		log.Logf(0, "error importing documents: %v", err)
-		util.ExitFail()
 	}
 }

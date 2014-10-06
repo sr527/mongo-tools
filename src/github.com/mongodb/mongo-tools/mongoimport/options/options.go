@@ -50,6 +50,10 @@ type IngestOptions struct {
 	// Forces mongoimport to halt the import operation at the first error
 	// rather than continuing the operation despite errors.
 	StopOnError bool `long:"stopOnError" description:"insert or update objects that already exist"`
+
+	// WARNING: This option is still experimental. Does not offer any guarantees on
+	// insertion order
+	Concurrent bool `long:"concurrent" description:"WARNING: still experimental. concurrently insert data"`
 }
 
 func (self *IngestOptions) Name() string {
