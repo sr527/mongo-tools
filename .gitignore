@@ -1,18 +1,16 @@
 *.swp
 *.exe
 
-bin/
-pkg/
+bin
 
-src/code.google.com/
-src/github.com/3rf/
-src/github.com/golang/
-src/github.com/jacobsa/
-src/github.com/jessevdk/
-src/github.com/ogier/
-src/github.com/smartystreets/
-src/github.com/spacemonkeygo/
-src/gopkg.in
-src/labix.org
+.gopath
 
-.godeps
+bsondump/main/bsondump
+mongodump/main/mongodump
+mongoexport/main/mongoexport
+mongofiles/main/mongofiles
+mongoimport/main/mongoimport 
+mongooplog/main/mongooplog
+mongorestore/main/mongorestore
+mongostat/main/mongostat
+mongotop/main/mongotop
