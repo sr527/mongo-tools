@@ -62,19 +62,19 @@ func (csvImporter *CSVInputReader) ReadHeadersFromSource() ([]string, error) {
 
 // ReadDocument reads a line of input with the CSV representation of a document
 // and writes the BSON equivalent to the provided channel
-func (csvImporter *CSVInputReader) ReadDocument(readDocChan chan bson.M) (err error) {
+func (csvImporter *CSVInputReader) ReadDocument() (map[string]interface{}, error) {
 	csvImporter.numProcessed++
-	csvImporter.csvRecord, err = csvImporter.csvReader.Read()
+	csvRecord, err := csvImporter.csvReader.Read()
 	if err != nil {
 		if err == io.EOF {
-			return err
+			return nil, err
 		}
-		return fmt.Errorf("read error on entry #%v: %v", csvImporter.numProcessed, err)
+		return nil, fmt.Errorf("read error on entry #%v: %v", csvImporter.numProcessed, err)
 	}
-	log.Logf(2, "got line: %v", strings.Join(csvImporter.csvRecord, ","))
+	log.Logf(2, "got line: %v", strings.Join(csvRecord, ","))
 	var key string
-	csvImporter.document = bson.M{}
-	for index, token := range csvImporter.csvRecord {
+	document := map[string]interface{}{}
+	for index, token := range csvRecord {
 		parsedValue := getParsedValue(token)
 		if index < len(csvImporter.Fields) {
 			// for nested fields - in the form "a.b.c", ensure
@@ -87,12 +87,13 @@ func (csvImporter *CSVInputReader) ReadDocument(readDocChan chan bson.M) (err er
 		} else {
 			key = "field" + strconv.Itoa(index)
 			if util.StringSliceContains(csvImporter.Fields, key) {
-				return fmt.Errorf("Duplicate header name - on %v - for token #%v ('%v') in document #%v",
+				return nil, fmt.Errorf("Duplicate header name - on %v - for token #%v ('%v') in document #%v",
 					key, index+1, parsedValue, csvImporter.numProcessed)
 			}
 			csvImporter.document[key] = parsedValue
 		}
 	}
-	readDocChan <- csvImporter.document
-	return nil
+	return document, nil
+	//readDocChan <- csvImporter.document
+	//return nil
 }

@@ -72,40 +72,39 @@ func (tsvImporter *TSVInputReader) ReadHeadersFromSource() ([]string, error) {
 
 // ReadDocument reads a line of input with the TSV representation of a document
 // and writes the BSON equivalent to the provided channel
-func (tsvImporter *TSVInputReader) ReadDocument(readDocChan chan bson.M) (err error) {
+func (tsvImporter *TSVInputReader) ReadDocument() (map[string]interface{}, error) {
 	tsvImporter.numProcessed++
-	tsvImporter.tsvRecord, err = tsvImporter.tsvReader.ReadString(entryDelimiter)
+	tsvRecord, err := tsvImporter.tsvReader.ReadString(entryDelimiter)
 	if err != nil {
 		if err == io.EOF {
-			return err
+			return nil, err
 		}
-		return fmt.Errorf("read error on entry #%v: %v", tsvImporter.numProcessed, err)
+		return nil, fmt.Errorf("read error on entry #%v: %v", tsvImporter.numProcessed, err)
 	}
-	log.Logf(2, "got line: %v", tsvImporter.tsvRecord)
+	log.Logf(2, "got line: %v", tsvRecord)
 
 	// strip the trailing '\r\n' from ReadString
-	if len(tsvImporter.tsvRecord) != 0 {
-		tsvImporter.tsvRecord = strings.TrimRight(tsvImporter.tsvRecord, "\r\n")
+	if len(tsvRecord) != 0 {
+		tsvRecord = strings.TrimRight(tsvRecord, "\r\n")
 	}
-	tsvImporter.document = bson.M{}
+	document := map[string]interface{}{}
 	var key string
-	for index, token := range strings.Split(tsvImporter.tsvRecord, tokenSeparator) {
+	for index, token := range strings.Split(tsvRecord, tokenSeparator) {
 		parsedValue := getParsedValue(token)
 		if index < len(tsvImporter.Fields) {
 			if strings.Contains(tsvImporter.Fields[index], ".") {
 				setNestedValue(tsvImporter.Fields[index], parsedValue, tsvImporter.document)
 			} else {
-				tsvImporter.document[tsvImporter.Fields[index]] = parsedValue
+				document[tsvImporter.Fields[index]] = parsedValue
 			}
 		} else {
 			key = "field" + strconv.Itoa(index)
 			if util.StringSliceContains(tsvImporter.Fields, key) {
-				return fmt.Errorf("Duplicate header name - on %v - for token #%v ('%v') in document #%v",
+				return nil, fmt.Errorf("Duplicate header name - on %v - for token #%v ('%v') in document #%v",
 					key, index+1, parsedValue, tsvImporter.numProcessed)
 			}
-			tsvImporter.document[key] = parsedValue
+			document[key] = parsedValue
 		}
 	}
-	readDocChan <- tsvImporter.document
-	return nil
+	return document, nil
 }

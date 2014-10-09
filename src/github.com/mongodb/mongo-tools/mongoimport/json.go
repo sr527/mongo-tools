@@ -3,9 +3,9 @@ package mongoimport
 import (
 	"errors"
 	"fmt"
-	"github.com/mongodb/mongo-tools/common/bsonutil"
+	//"github.com/mongodb/mongo-tools/common/bsonutil"
 	"github.com/mongodb/mongo-tools/common/json"
-	"github.com/mongodb/mongo-tools/common/log"
+	//"github.com/mongodb/mongo-tools/common/log"
 	"gopkg.in/mgo.v2/bson"
 	"io"
 	"strings"
@@ -162,25 +162,28 @@ func (jsonImporter *JSONInputReader) readJSONArraySeparator() error {
 
 // ReadDocument reads a line of input with the JSON representation of a document
 // and writes the BSON equivalent to the provided channel
-func (jsonImporter *JSONInputReader) ReadDocument(readDocChan chan bson.M) (err error) {
+func (jsonImporter *JSONInputReader) ReadDocument() (map[string]interface{}, error) {
 	if jsonImporter.IsArray {
-		if err = jsonImporter.readJSONArraySeparator(); err != nil {
+		if err := jsonImporter.readJSONArraySeparator(); err != nil {
 			if err == io.EOF {
-				return err
+				return nil, err
 			}
 			jsonImporter.numProcessed++
-			return fmt.Errorf("error reading separator after document #%v: %v", jsonImporter.numProcessed, err)
+			return nil, fmt.Errorf("error reading separator after document #%v: %v", jsonImporter.numProcessed, err)
 		}
 	}
 	jsonImporter.numProcessed++
-	jsonImporter.document = bson.M{}
-	if err = jsonImporter.Decoder.Decode(&jsonImporter.document); err != nil {
+
+	//document := map[string]interface{}{}
+	//err := jsonImporter.Decoder.Decode(&document)
+	document, err := jsonImporter.Decoder.DecodeMap()
+	if err != nil {
 		if err == io.EOF {
-			return err
+			return nil, err
 		}
-		return fmt.Errorf("JSON decode error on document #%v: %v", jsonImporter.numProcessed, err)
+		return nil, fmt.Errorf("JSON decode error on document #%v: %v", jsonImporter.numProcessed, err)
 	}
-	log.Logf(2, "got line: %#v", jsonImporter.document)
+	//log.Logf(2, "got line: %#v", document)
 
 	// convert any data produced by mongoexport to the appropriate underlying
 	// extended BSON type. NOTE: this assumes specially formated JSON values
@@ -193,10 +196,11 @@ func (jsonImporter *JSONInputReader) ReadDocument(readDocChan chan bson.M) (err 
 	// ObjectId("53cefc71b14ed89d84856287")
 	//
 	// This applies for all the other extended JSON types MongoDB supports
-	if err = bsonutil.ConvertJSONDocumentToBSON(jsonImporter.document); err != nil {
-		return fmt.Errorf("JSON => BSON conversion error on document #%v: %v", jsonImporter.numProcessed, err)
-	}
-	log.Logf(3, "got extended line: %#v", jsonImporter.document)
-	readDocChan <- jsonImporter.document
-	return nil
+	//if err := bsonutil.ConvertJSONDocumentToBSON(jsonImporter.document); err != nil {
+	//return nil, fmt.Errorf("JSON => BSON conversion error on document #%v: %v", jsonImporter.numProcessed, err)
+	//}
+	return document, nil
+	//log.Logf(3, "got extended line: %#v", jsonImporter.document)
+	//readDocChan <- jsonImporter.document
+	//return nil
 }

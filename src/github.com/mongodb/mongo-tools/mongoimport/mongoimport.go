@@ -62,7 +62,7 @@ type MongoImport struct {
 type InputReader interface {
 	// ReadDocument reads the given record from the given io.Reader according
 	// to the format supported by the underlying InputReader implementation.kk
-	ReadDocument(chan bson.M) error
+	ReadDocument() (map[string]interface{}, error)
 
 	// SetHeader sets the header for the CSV/TSV import when --headerline is
 	// specified. It a --fields or --fieldFile argument is passed, it overwrites
@@ -255,22 +255,44 @@ func (mongoImport *MongoImport) importDocuments(inputReader InputReader) (docsCo
 		}
 	}
 
-	readDocChan := make(chan bson.M, batchSize)
+	//readDocChan := make(chan *bson.M, batchSize)
 	readErrChan := make(chan error)
 
 	go func() {
 		for {
-			if err = inputReader.ReadDocument(readDocChan); err != nil {
+			doc, err := inputReader.ReadDocument()
+			_ = doc
+			if err != nil {
 				if err == io.EOF || mongoImport.IngestOptions.StopOnError {
-					close(readDocChan)
+					//close(readDocChan)
 					readErrChan <- err
 					return
 				}
 				log.Logf(0, "error reading document: %v", err)
 			}
+			docsCount++
+			if docsCount%10000 == 0 {
+				log.Logf(0, "Progress: %v documents inserted...", docsCount)
+			}
+			//readDocChan <- doc
 		}
 	}()
-	docsCount, err = mongoImport.IngestDocuments(readDocChan, collection)
+
+	/*
+		for i:=0;i<poolsize;i++{
+			go func() {
+				for doc := range readDocChan {
+					_ = doc
+					docsCount++
+					if docsCount%10000 == 0 {
+						log.Logf(0, "Progress: %v documents inserted...", docsCount)
+					}
+					continue
+				}
+			}()
+		}
+	*/
+	//docsCount, err = mongoImport.IngestDocuments(readDocChan, collection)
 	readErr = <-readErrChan
 	return docsCount, err
 }

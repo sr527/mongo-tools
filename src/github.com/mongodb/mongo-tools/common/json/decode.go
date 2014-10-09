@@ -129,6 +129,25 @@ func (e *InvalidUnmarshalError) Error() string {
 	return "json: Unmarshal(nil " + e.Type.String() + ")"
 }
 
+func (d *decodeState) unmarshalMap() (out map[string]interface{}, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			if _, ok := r.(runtime.Error); ok {
+				panic(r)
+			}
+			err = r.(error)
+		}
+	}()
+
+	d.scan.reset()
+	// We decode rv not rv.Elem because the Unmarshaler interface
+	// test must be applied at the top level of the value.
+	out = d.document()
+	//return d.document()
+	return out, d.savedError
+	//return d.savedError
+}
+
 func (d *decodeState) unmarshal(v interface{}) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -275,6 +294,16 @@ func (d *decodeState) scanWhile(op int) int {
 		}
 	}
 	return newOp
+}
+
+func (d *decodeState) document() map[string]interface{} {
+	switch op := d.scanWhile(scanSkipSpace); op {
+	default:
+		d.error(errPhase)
+		return nil
+	case scanBeginObject:
+		return d.objectInterface()
+	}
 }
 
 // value decodes a JSON value from d.data[d.off:] into the value.
