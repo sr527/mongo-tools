@@ -5,7 +5,7 @@ set -eu
 # Make sure we're in the directory where the script lives
 SCRIPT_DIR="$(cd "$(dirname ${BASH_SOURCE[0]})" && pwd)"
 cd $SCRIPT_DIR
-echo "Running dependency installation script..."
+echo "Installing dependencies..."
 
 # Set the $GOPATH appropriately so that the dependencies are 
 # installed into the vendor directory
