@@ -32,8 +32,8 @@ const (
 
 // compile-time interface sanity check
 var (
-	_ InputReader = (*CSVInputReader)(nil)
-	_ InputReader = (*TSVInputReader)(nil)
+	// 	_ InputReader = (*CSVInputReader)(nil)
+	// 	_ InputReader = (*TSVInputReader)(nil)
 	_ InputReader = (*JSONInputReader)(nil)
 )
 
@@ -63,6 +63,8 @@ type InputReader interface {
 	// ReadDocument reads the given record from the given io.Reader according
 	// to the format supported by the underlying InputReader implementation.kk
 	ReadDocument() (map[string]interface{}, error)
+
+	ReadDocs(chan map[string]interface{})
 
 	// SetHeader sets the header for the CSV/TSV import when --headerline is
 	// specified. It a --fields or --fieldFile argument is passed, it overwrites
@@ -412,20 +414,23 @@ func (mongoImport *MongoImport) ingestDocumentsConcurrently(documents []interfac
 // getInputReader returns an implementation of InputReader which can handle
 // transforming TSV, CSV, or JSON into appropriate BSON documents
 func (mongoImport *MongoImport) getInputReader(in io.Reader) (InputReader, error) {
-	var fields []string
-	var err error
-	if len(mongoImport.InputOptions.Fields) != 0 {
-		fields = strings.Split(strings.Trim(mongoImport.InputOptions.Fields, " "), ",")
-	} else if mongoImport.InputOptions.FieldFile != "" {
-		fields, err = util.GetFieldsFromFile(mongoImport.InputOptions.FieldFile)
-		if err != nil {
-			return nil, err
+	//var fields []string
+	//var err error
+	/*
+		if len(mongoImport.InputOptions.Fields) != 0 {
+			fields = strings.Split(strings.Trim(mongoImport.InputOptions.Fields, " "), ",")
+		} else if mongoImport.InputOptions.FieldFile != "" {
+			fields, err = util.GetFieldsFromFile(mongoImport.InputOptions.FieldFile)
+			if err != nil {
+				return nil, err
+			}
 		}
-	}
-	if mongoImport.InputOptions.Type == CSV {
-		return NewCSVInputReader(fields, in), nil
-	} else if mongoImport.InputOptions.Type == TSV {
-		return NewTSVInputReader(fields, in), nil
-	}
+	*/
+	/*
+		if mongoImport.InputOptions.Type == CSV {
+			return NewCSVInputReader(fields, in), nil
+		} else if mongoImport.InputOptions.Type == TSV {
+			return NewTSVInputReader(fields, in), nil
+		}*/
 	return NewJSONInputReader(mongoImport.InputOptions.JSONArray, in), nil
 }

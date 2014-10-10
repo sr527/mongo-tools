@@ -160,6 +160,44 @@ func (jsonImporter *JSONInputReader) readJSONArraySeparator() error {
 	return nil
 }
 
+func decodeDocs(rawChan chan []byte, docChan chan map[string]interface{}) {
+	buf := <-rawChan
+	outDoc, err := json.UnmarshalMap(buf)
+	if err != nil {
+		panic(err)
+	}
+	docChan <- outDoc
+}
+
+func (jsonImporter *JSONInputReader) ReadDocs(outChan chan map[string]interface{}) {
+	rawChan := make(chan []byte)
+	go func() {
+		for {
+			/*
+				if jsonImporter.IsArray {
+					if err := jsonImporter.readJSONArraySeparator(); err != nil {
+						if err == io.EOF {
+							return nil, err
+						}
+						jsonImporter.numProcessed++
+						return nil, fmt.Errorf("error reading separator after document #%v: %v", jsonImporter.numProcessed, err)
+					}
+				}
+			*/
+			docraw, err := jsonImporter.Decoder.ScanObject()
+			if err != nil {
+				return
+			}
+			rawChan <- docraw
+		}
+	}()
+
+	for i := 0; i < 5; i++ {
+		go decodeDocs(rawChan, outChan)
+	}
+
+}
+
 // ReadDocument reads a line of input with the JSON representation of a document
 // and writes the BSON equivalent to the provided channel
 func (jsonImporter *JSONInputReader) ReadDocument() (map[string]interface{}, error) {
@@ -183,7 +221,6 @@ func (jsonImporter *JSONInputReader) ReadDocument() (map[string]interface{}, err
 		}
 		return nil, fmt.Errorf("JSON decode error on document #%v: %v", jsonImporter.numProcessed, err)
 	}
-	//log.Logf(2, "got line: %#v", document)
 
 	// convert any data produced by mongoexport to the appropriate underlying
 	// extended BSON type. NOTE: this assumes specially formated JSON values

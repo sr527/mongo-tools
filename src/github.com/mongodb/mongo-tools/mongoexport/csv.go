@@ -50,6 +50,9 @@ func (csvExporter *CSVExportOutput) Flush() error {
 	return csvExporter.csvWriter.Error()
 }
 
+func (jsonImporter *JSONInputReader) ReadDocs(chan map[string]interface{}) {
+}
+
 // ExportDocument writes a line to output with the CSV representation of a doc.
 func (csvExporter *CSVExportOutput) ExportDocument(document bson.M) error {
 	rowOut := make([]string, 0, len(csvExporter.Fields))

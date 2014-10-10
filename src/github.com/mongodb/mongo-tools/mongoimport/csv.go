@@ -60,6 +60,8 @@ func (csvImporter *CSVInputReader) ReadHeadersFromSource() ([]string, error) {
 	return csvImporter.csvReader.Read()
 }
 
+func (csvImporter *CSVInputReader) ReadDocs(chan map[string]interface{}) {}
+
 // ReadDocument reads a line of input with the CSV representation of a document
 // and writes the BSON equivalent to the provided channel
 func (csvImporter *CSVInputReader) ReadDocument() (map[string]interface{}, error) {

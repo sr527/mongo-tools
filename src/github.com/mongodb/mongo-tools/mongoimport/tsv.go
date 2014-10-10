@@ -70,6 +70,8 @@ func (tsvImporter *TSVInputReader) ReadHeadersFromSource() ([]string, error) {
 	return unsortedHeaders, nil
 }
 
+func (tsvImporter *TSVInputReader) ReadDocs(chan map[string]interface{}) {}
+
 // ReadDocument reads a line of input with the TSV representation of a document
 // and writes the BSON equivalent to the provided channel
 func (tsvImporter *TSVInputReader) ReadDocument() (map[string]interface{}, error) {

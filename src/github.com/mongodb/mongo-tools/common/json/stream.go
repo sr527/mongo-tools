@@ -59,6 +59,25 @@ func (dec *Decoder) DecodeMap() (map[string]interface{}, error) {
 	return out, err
 }
 
+func (dec *Decoder) ScanObject() ([]byte, error) {
+	if dec.err != nil {
+		return nil, dec.err
+	}
+
+	n, err := dec.readValue()
+	if err != nil {
+		return nil, err
+	}
+
+	outbuf := make([]byte, n)
+	copy(dec.Buf[0:n], outbuf)
+	// Slide rest of data down.
+	rest := copy(dec.Buf, dec.Buf[n:])
+	dec.Buf = dec.Buf[0:rest]
+	return outbuf, nil
+
+}
+
 func (dec *Decoder) Decode(v interface{}) error {
 	if dec.err != nil {
 		return dec.err
