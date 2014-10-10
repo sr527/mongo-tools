@@ -70,7 +70,7 @@ func (dec *Decoder) ScanObject() ([]byte, error) {
 	}
 
 	outbuf := make([]byte, n)
-	copy(dec.Buf[0:n], outbuf)
+	copy(outbuf, dec.Buf[0:n])
 	// Slide rest of data down.
 	rest := copy(dec.Buf, dec.Buf[n:])
 	dec.Buf = dec.Buf[0:rest]

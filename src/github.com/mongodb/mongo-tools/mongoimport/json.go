@@ -3,12 +3,13 @@ package mongoimport
 import (
 	"errors"
 	"fmt"
-	//"github.com/mongodb/mongo-tools/common/bsonutil"
+	"github.com/mongodb/mongo-tools/common/bsonutil"
 	"github.com/mongodb/mongo-tools/common/json"
 	//"github.com/mongodb/mongo-tools/common/log"
 	"gopkg.in/mgo.v2/bson"
 	"io"
 	"strings"
+	"sync"
 )
 
 // JSONInputReader is an implementation of InputReader that reads documents
@@ -161,12 +162,13 @@ func (jsonImporter *JSONInputReader) readJSONArraySeparator() error {
 }
 
 func decodeDocs(rawChan chan []byte, docChan chan map[string]interface{}) {
-	buf := <-rawChan
-	outDoc, err := json.UnmarshalMap(buf)
-	if err != nil {
-		panic(err)
+	for buf := range rawChan {
+		outDoc, err := json.UnmarshalMap(buf)
+		if err != nil {
+			panic(err)
+		}
+		docChan <- outDoc
 	}
-	docChan <- outDoc
 }
 
 func (jsonImporter *JSONInputReader) ReadDocs(outChan chan map[string]interface{}) {
@@ -184,17 +186,28 @@ func (jsonImporter *JSONInputReader) ReadDocs(outChan chan map[string]interface{
 					}
 				}
 			*/
-			docraw, err := jsonImporter.Decoder.ScanObject()
+
+			//doc := map[string]interface{}{}
+			raw, err := jsonImporter.Decoder.ScanObject()
+			//err := jsonImporter.Decoder.Decode(&doc)
 			if err != nil {
+				close(rawChan)
 				return
 			}
-			rawChan <- docraw
+			rawChan <- raw
 		}
 	}()
 
-	for i := 0; i < 5; i++ {
-		go decodeDocs(rawChan, outChan)
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			decodeDocs(rawChan, outChan)
+		}()
 	}
+	wg.Wait()
+	close(outChan)
 
 }
 
@@ -233,9 +246,9 @@ func (jsonImporter *JSONInputReader) ReadDocument() (map[string]interface{}, err
 	// ObjectId("53cefc71b14ed89d84856287")
 	//
 	// This applies for all the other extended JSON types MongoDB supports
-	//if err := bsonutil.ConvertJSONDocumentToBSON(jsonImporter.document); err != nil {
-	//return nil, fmt.Errorf("JSON => BSON conversion error on document #%v: %v", jsonImporter.numProcessed, err)
-	//}
+	if err := bsonutil.ConvertJSONDocumentToBSON(jsonImporter.document); err != nil {
+		return nil, fmt.Errorf("JSON => BSON conversion error on document #%v: %v", jsonImporter.numProcessed, err)
+	}
 	return document, nil
 	//log.Logf(3, "got extended line: %#v", jsonImporter.document)
 	//readDocChan <- jsonImporter.document

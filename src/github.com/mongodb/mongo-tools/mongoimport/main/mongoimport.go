@@ -8,19 +8,9 @@ import (
 	"github.com/mongodb/mongo-tools/common/util"
 	"github.com/mongodb/mongo-tools/mongoimport"
 	"github.com/mongodb/mongo-tools/mongoimport/options"
-	"os"
-	"runtime/pprof"
 )
 
 func main() {
-	f, err := os.Create("/tmp/profout")
-	if err != nil {
-		panic(err)
-	}
-
-	pprof.StartCPUProfile(f)
-	defer pprof.StopCPUProfile()
-
 	// initialize command-line opts
 	usageStr := " --host myhost --db my_cms --collection docs < mydocfile." +
 		"json \n\nImport CSV, TSV or JSON data into MongoDB.\n\nWhen importing " +

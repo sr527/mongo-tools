@@ -27,7 +27,7 @@ const (
 // ingestion constants
 const (
 	maxMessageSizeBytes = 32 * 1000 * 1000
-	batchSize           = 100000 // TODO: make this configurable
+	batchSize           = 10000 // TODO: make this configurable
 )
 
 // compile-time interface sanity check
@@ -257,28 +257,34 @@ func (mongoImport *MongoImport) importDocuments(inputReader InputReader) (docsCo
 		}
 	}
 
-	//readDocChan := make(chan *bson.M, batchSize)
-	readErrChan := make(chan error)
+	readDocChan := make(chan map[string]interface{}, batchSize)
+	//readErrChan := make(chan error)
 
-	go func() {
-		for {
-			doc, err := inputReader.ReadDocument()
-			_ = doc
-			if err != nil {
-				if err == io.EOF || mongoImport.IngestOptions.StopOnError {
-					//close(readDocChan)
-					readErrChan <- err
-					return
+	go inputReader.ReadDocs(readDocChan)
+
+	/*
+		go func() {
+			docsCount := 0
+			for _ = range readDocChan {
+				docsCount++
+				if docsCount%10000 == 0 {
+					log.Logf(0, "Progress: %v documents inserted...", docsCount)
 				}
-				log.Logf(0, "error reading document: %v", err)
+				doc, err := inputReader.ReadDocument()
+				_ = doc
+				if err != nil {
+					if err == io.EOF || mongoImport.IngestOptions.StopOnError {
+						//close(readDocChan)
+						readErrChan <- err
+						return
+					}
+					log.Logf(0, "error reading document: %v", err)
+				}
+				//readDocChan <- doc
 			}
-			docsCount++
-			if docsCount%10000 == 0 {
-				log.Logf(0, "Progress: %v documents inserted...", docsCount)
-			}
-			//readDocChan <- doc
-		}
-	}()
+			readErrChan <- nil
+		}()
+	*/
 
 	/*
 		for i:=0;i<poolsize;i++{
@@ -294,14 +300,67 @@ func (mongoImport *MongoImport) importDocuments(inputReader InputReader) (docsCo
 			}()
 		}
 	*/
-	//docsCount, err = mongoImport.IngestDocuments(readDocChan, collection)
-	readErr = <-readErrChan
-	return docsCount, err
+	docsCount, err = mongoImport.IngestDocuments(readDocChan, collection)
+	//readErr = <-readErrChan
+	return docsCount, nil //err
 }
 
+func (mongoImport *MongoImport) ingestDocs(docChan chan map[string]interface{}, collection *mgo.Collection) error {
+	session, err := mongoImport.SessionProvider.GetSession()
+	if err != nil {
+		return err
+	}
+	defer session.Close()
+	session.SetSocketTimeout(0)
+	session.SetSafe(nil)
+	insertBatch := 1000
+	batch := make([]interface{}, 0, insertBatch)
+	for doc := range docChan {
+		batch = append(batch, doc)
+		if len(batch) >= insertBatch {
+			collection.Insert(batch...)
+			batch = make([]interface{}, 0, insertBatch)
+		}
+		//batch = append(batch, doc)
+		//if len(batch) >= batchSize {
+		//}
+	}
+	//if len(batch) > 0 {
+	//collection.Insert(batch...)
+	//}
+
+	//selector := constructUpsertDocument(upsertFields, doc.(bson.M))
+	//if selector == nil {
+	//err = collection.Insert(doc)
+	//} else {
+	//_, err = collection.Upsert(selector, doc.(bson.M))
+	//}
+	//if err != nil {
+	//return err
+	//}
+	return nil
+}
+
+func (mongoImport *MongoImport) IngestDocuments(readDocChan chan map[string]interface{}, collection *mgo.Collection) (docsCount int64, err error) {
+	//ignoreBlanks := mongoImport.IngestOptions.IgnoreBlanks && mongoImport.InputOptions.Type != JSON
+	wg := sync.WaitGroup{}
+
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			mongoImport.ingestDocs(readDocChan, collection)
+		}()
+	}
+
+	wg.Wait()
+	return 0, nil
+}
+
+/*
 // IngestDocuments takes a slice of documents and either inserts/upserts them -
 // based on whether an upsert is requested - into the given collection
-func (mongoImport *MongoImport) IngestDocuments(readDocChan chan bson.M, collection *mgo.Collection) (docsCount int64, err error) {
+func (mongoImport *MongoImport) IngestDocuments(readDocChan chan map[string]interface{}, collection *mgo.Collection) (docsCount int64, err error) {
 	ignoreBlanks := mongoImport.IngestOptions.IgnoreBlanks && mongoImport.InputOptions.Type != JSON
 
 	numMessageBytes := 0
@@ -311,13 +370,6 @@ func (mongoImport *MongoImport) IngestDocuments(readDocChan chan bson.M, collect
 	documents := make([]interface{}, 0)
 
 	for document := range readDocChan {
-		/*
-			docsCount++
-			if docsCount == batchSize {
-				log.Logf(0, "Progress: %v documents inserted...", docsCount)
-			}
-			continue
-		*/
 		// ignore blank fields if specified
 		if ignoreBlanks {
 			document = removeBlankFields(document)
@@ -372,6 +424,7 @@ func (mongoImport *MongoImport) IngestDocuments(readDocChan chan bson.M, collect
 	}
 	return
 }
+*/
 
 // ingestDocuments is a helper to IngestDocuments - the actual insertion/updates
 // happen here. If no upsert fields are found, it simply inserts the documents
