@@ -216,7 +216,7 @@ func (restore *MongoRestore) RestoreCollectionToDB(dbName, colName string,
 	bar.Start()
 	defer bar.Stop()
 
-	MaxInsertThreads := 16
+	MaxInsertThreads := 16 / 4
 	BulkBufferSize := 2048
 	docChan := make(chan bson.Raw, BulkBufferSize*MaxInsertThreads)
 	errChan := make(chan error, MaxInsertThreads)
@@ -253,7 +253,7 @@ func (restore *MongoRestore) RestoreCollectionToDB(dbName, colName string,
 						err := bson.Unmarshal(rawDoc.Data, &bson.D{})
 						if err != nil {
 							errChan <- fmt.Errorf("invalid object: %v", err)
-							break
+							return
 						}
 					}
 					err := bulk.Insert(rawDoc)
@@ -275,6 +275,7 @@ func (restore *MongoRestore) RestoreCollectionToDB(dbName, colName string,
 		select {
 		case err := <-errChan:
 			close(killChan)
+			//TODO actually wait for things to end?
 			return err
 		case <-doneChan: // no-op
 		}
