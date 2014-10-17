@@ -9,7 +9,6 @@ import (
 	"io/ioutil"
 	"os"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -207,7 +206,6 @@ func (restore *MongoRestore) RestoreCollectionToDB(dbName, colName string,
 
 	//progress bar handler
 	bytesRead := 0
-	bytesReadLock := &sync.Mutex{}
 	bar := progress.ProgressBar{
 		Max:        int(fileSize),
 		CounterPtr: &bytesRead,
@@ -218,12 +216,12 @@ func (restore *MongoRestore) RestoreCollectionToDB(dbName, colName string,
 	bar.Start()
 	defer bar.Stop()
 
-	MaxInsertThreads := 4
-	docChan := make(chan bson.Raw, 4000*MaxInsertThreads)
+	MaxInsertThreads := 16
+	BulkBufferSize := 2048
+	docChan := make(chan bson.Raw, BulkBufferSize*MaxInsertThreads)
 	errChan := make(chan error, MaxInsertThreads)
 	killChan := make(chan struct{})
 	doneChan := make(chan struct{})
-	doneCount := 0
 
 	go func() {
 		doc := bson.Raw{}
@@ -236,9 +234,10 @@ func (restore *MongoRestore) RestoreCollectionToDB(dbName, colName string,
 	}()
 
 	for i := 0; i < MaxInsertThreads; i++ {
+		time.Sleep(10 * time.Millisecond) //FIXME, avoid blocking all at once
 		go func() {
 			defer func() { doneChan <- struct{}{} }()
-			bulk := db.NewBufferedBulk(collection, 4000, false)
+			bulk := db.NewBufferedBulk(collection, BulkBufferSize, false)
 			for {
 				select {
 				case rawDoc, alive := <-docChan:
@@ -262,9 +261,8 @@ func (restore *MongoRestore) RestoreCollectionToDB(dbName, colName string,
 						errChan <- err
 						return
 					}
-					bytesReadLock.Lock()
+					//FIXME this is a race
 					bytesRead += len(rawDoc.Data)
-					bytesReadLock.Unlock()
 				case <-killChan:
 					return
 				}
@@ -272,19 +270,18 @@ func (restore *MongoRestore) RestoreCollectionToDB(dbName, colName string,
 		}()
 	}
 
-	for {
+	// wait until all insert jobs finish
+	for done := 0; done < MaxInsertThreads; done++ {
 		select {
 		case err := <-errChan:
 			close(killChan)
 			return err
-		case <-doneChan:
-			doneCount++
-			if doneCount == MaxInsertThreads { //TODO
-				if err = bsonSource.Err(); err != nil {
-					return err
-				}
-				return nil
-			}
+		case <-doneChan: // no-op
 		}
 	}
+	// final error check
+	if err = bsonSource.Err(); err != nil {
+		return err
+	}
+	return nil
 }
