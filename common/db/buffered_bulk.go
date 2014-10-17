@@ -70,6 +70,9 @@ func (bb *BufferedBulk) Insert(doc interface{}) error {
 // then resets the bulk buffer
 func (bb *BufferedBulk) Flush() error {
 	bb.flushCount++
+	if bb.docCount == 0 {
+		return nil
+	}
 	if _, err := bb.bulk.Run(); err != nil {
 		return err
 	}

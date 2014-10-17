@@ -59,13 +59,13 @@ func TestBufferedBulkInserts(t *testing.T) {
 			})
 		})
 
-		Convey("using a test collection and a doc limit of 100", func() {
+		Convey("using a test collection and a doc limit of 1000", func() {
 			testCol := session.DB("tools-test").C("bulk3")
 			bufBulk = NewBufferedBulk(testCol, 100, false)
 			So(bufBulk, ShouldNotBeNil)
 
-			Convey("inserting 1000 documents into the BufferedBulk and flushing", func() {
-				for i := 0; i < 1000; i++ {
+			Convey("inserting 1,000,000 documents into the BufferedBulk and flushing", func() {
+				for i := 0; i < 1000000; i++ {
 					bufBulk.Insert(bson.M{"_id": i})
 				}
 				So(bufBulk.Flush(), ShouldBeNil)
@@ -73,16 +73,16 @@ func TestBufferedBulkInserts(t *testing.T) {
 				Convey("should have inserted all of the documents", func() {
 					count, err := testCol.Count()
 					So(err, ShouldBeNil)
-					So(count, ShouldEqual, 1000)
+					So(count, ShouldEqual, 1000000)
 
 					// test values
 					testDoc := bson.M{}
-					err = testCol.Find(bson.M{"_id": 477}).One(&testDoc)
+					err = testCol.Find(bson.M{"_id": 477232}).One(&testDoc)
 					So(err, ShouldBeNil)
-					So(testDoc["_id"], ShouldEqual, 477)
-					err = testCol.Find(bson.M{"_id": 999}).One(&testDoc)
+					So(testDoc["_id"], ShouldEqual, 477232)
+					err = testCol.Find(bson.M{"_id": 999999}).One(&testDoc)
 					So(err, ShouldBeNil)
-					So(testDoc["_id"], ShouldEqual, 999)
+					So(testDoc["_id"], ShouldEqual, 999999)
 					err = testCol.Find(bson.M{"_id": 1}).One(&testDoc)
 					So(err, ShouldBeNil)
 					So(testDoc["_id"], ShouldEqual, 1)

@@ -9,6 +9,7 @@ import (
 	"io/ioutil"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -206,6 +207,7 @@ func (restore *MongoRestore) RestoreCollectionToDB(dbName, colName string,
 
 	//progress bar handler
 	bytesRead := 0
+	bytesReadLock := &sync.Mutex{}
 	bar := progress.ProgressBar{
 		Max:        int(fileSize),
 		CounterPtr: &bytesRead,
@@ -216,25 +218,73 @@ func (restore *MongoRestore) RestoreCollectionToDB(dbName, colName string,
 	bar.Start()
 	defer bar.Stop()
 
-	//TODO use a goroutine here
-	doc := &bson.Raw{}
-	for bsonSource.Next(doc) {
-		bytesRead += len(doc.Data)
-		if restore.objCheck {
-			//TODO encapsulate to reuse bson obj??
-			err := bson.Unmarshal(doc.Data, &bson.D{})
-			if err != nil {
-				return err
-				break
+	MaxInsertThreads := 4
+	docChan := make(chan bson.Raw, 4000*MaxInsertThreads)
+	errChan := make(chan error, MaxInsertThreads)
+	killChan := make(chan struct{})
+	doneChan := make(chan struct{})
+	doneCount := 0
+
+	go func() {
+		doc := bson.Raw{}
+		for bsonSource.Next(&doc) {
+			rawBytes := make([]byte, len(doc.Data))
+			copy(rawBytes, doc.Data)
+			docChan <- bson.Raw{Data: rawBytes}
+		}
+		close(docChan)
+	}()
+
+	for i := 0; i < MaxInsertThreads; i++ {
+		go func() {
+			defer func() { doneChan <- struct{}{} }()
+			bulk := db.NewBufferedBulk(collection, 4000, false)
+			for {
+				select {
+				case rawDoc, alive := <-docChan:
+					if !alive {
+						err = bulk.Flush()
+						if err != nil {
+							errChan <- err
+						}
+						return
+					}
+					if restore.objCheck {
+						//TODO encapsulate to reuse bson obj??
+						err := bson.Unmarshal(rawDoc.Data, &bson.D{})
+						if err != nil {
+							errChan <- fmt.Errorf("invalid object: %v", err)
+							break
+						}
+					}
+					err := bulk.Insert(rawDoc)
+					if err != nil {
+						errChan <- err
+						return
+					}
+					bytesReadLock.Lock()
+					bytesRead += len(rawDoc.Data)
+					bytesReadLock.Unlock()
+				case <-killChan:
+					return
+				}
+			}
+		}()
+	}
+
+	for {
+		select {
+		case err := <-errChan:
+			close(killChan)
+			return err
+		case <-doneChan:
+			doneCount++
+			if doneCount == MaxInsertThreads { //TODO
+				if err = bsonSource.Err(); err != nil {
+					return err
+				}
+				return nil
 			}
 		}
-		err := collection.Insert(doc)
-		if err != nil {
-			return err
-		}
 	}
-	if err = bsonSource.Err(); err != nil {
-		return err
-	}
-	return nil
 }
