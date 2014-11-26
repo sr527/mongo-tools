@@ -84,6 +84,13 @@ type InputReader interface {
 	GetHeaders() []string
 }
 
+// insertableDoc is a struct that stores a raw BSON insertable document along
+// with a selector to be used for any upsert operations
+type insertableDoc struct {
+	selector bson.D
+	raw      bson.Raw
+}
+
 // ValidateSettings ensures that the tool specific options supplied for
 // MongoImport are valid
 func (mongoImport *MongoImport) ValidateSettings(args []string) error {
@@ -289,8 +296,6 @@ func (mongoImport *MongoImport) importDocuments(inputReader InputReader) (numImp
 		collection := session.DB(mongoImport.ToolOptions.DB).
 			C(mongoImport.ToolOptions.Collection)
 		if err := collection.DropCollection(); err != nil {
-			// TODO: do all mongods (e.g. v2.4) return this same
-			// error message?
 			if err.Error() != db.ErrNsNotFound.Error() {
 				return 0, err
 			}
@@ -324,16 +329,16 @@ func (mongoImport *MongoImport) importDocuments(inputReader InputReader) (numImp
 	// return immediately on ingest errors - these will be triggered
 	// either by an issue ingesting data or if the read channel is
 	// closed so we can block here while reads happen in a goroutine
-	if err = mongoImport.IngestDocuments(readDocChan); err != nil {
+	if err = mongoImport.InsertDocuments(readDocChan); err != nil {
 		return mongoImport.insertionCount, err
 	}
 	readErr = <-readErrChan
 	return mongoImport.insertionCount, retErr
 }
 
-// IngestDocuments takes a slice of documents and either inserts/upserts them -
+// InsertDocuments takes a slice of documents and either inserts/upserts them -
 // based on whether an upsert is requested - into the given collection
-func (mongoImport *MongoImport) IngestDocuments(readChan chan bson.D) (err error) {
+func (mongoImport *MongoImport) InsertDocuments(readChan chan bson.D) (err error) {
 	// initialize the tomb where all goroutines go to die
 	mongoImport.tomb = &tomb.Tomb{}
 
@@ -352,7 +357,7 @@ func (mongoImport *MongoImport) IngestDocuments(readChan chan bson.D) (err error
 			// 2. The server becomes unreachable
 			// 3. There is an insertion/update error - e.g. duplicate key
 			//    error - and stopOnError is set to true
-			return mongoImport.ingestDocs(readChan)
+			return mongoImport.runInsertionWorker(readChan)
 		})
 	}
 	return mongoImport.tomb.Wait()
@@ -379,9 +384,9 @@ func (mongoImport *MongoImport) configureSession(session *mgo.Session) error {
 	return nil
 }
 
-// ingestDocuments is a helper to IngestDocuments - it reads document off the
-// read channel and prepares then for insertion into the database
-func (mongoImport *MongoImport) ingestDocs(readChan chan bson.D) (err error) {
+// runInsertionWorker is a helper to InsertDocuments - it reads document off
+// the read channel and prepares then in batches for insertion into the database
+func (mongoImport *MongoImport) runInsertionWorker(readChan chan bson.D) (err error) {
 	session, err := mongoImport.SessionProvider.GetSession()
 	if err != nil {
 		return fmt.Errorf("error connecting to mongod: %v", err)
@@ -390,10 +395,13 @@ func (mongoImport *MongoImport) ingestDocs(readChan chan bson.D) (err error) {
 	if err = mongoImport.configureSession(session); err != nil {
 		return fmt.Errorf("error configuring session: %v", err)
 	}
+
+	upsert := mongoImport.IngestOptions.Upsert
+	upsertFields := strings.Split(mongoImport.IngestOptions.UpsertFields, ",")
 	collection := session.DB(mongoImport.ToolOptions.DB).C(mongoImport.ToolOptions.Collection)
 	ignoreBlanks := mongoImport.IngestOptions.IgnoreBlanks && mongoImport.InputOptions.Type != JSON
 	documentBytes := make([]byte, 0)
-	documents := make([]bson.Raw, 0)
+	documents := make([]insertableDoc, 0)
 	numMessageBytes := 0
 
 readLoop:
@@ -408,7 +416,7 @@ readLoop:
 			// and send documents over the wire when we hit the batch size
 			// or when we're at/over the maximum message size threshold
 			if len(documents) == mongoImport.ToolOptions.BulkBufferSize || numMessageBytes >= maxMessageSizeBytes {
-				if err = mongoImport.ingester(documents, collection); err != nil {
+				if err = mongoImport.insert(documents, collection); err != nil {
 					return err
 				}
 				// TODO: TOOLS-313; better to use a progress bar here
@@ -418,15 +426,27 @@ readLoop:
 				documents = documents[:0]
 				numMessageBytes = 0
 			}
+
 			// ignore blank fields if specified
 			if ignoreBlanks {
 				document = removeBlankFields(document)
 			}
+
 			if documentBytes, err = bson.Marshal(document); err != nil {
 				return err
 			}
 			numMessageBytes += len(documentBytes)
-			documents = append(documents, bson.Raw{3, documentBytes})
+
+			// BSON type 3 represents an embedded document
+			insertableDoc := insertableDoc{
+				raw: bson.Raw{3, documentBytes},
+			}
+
+			if upsert {
+				insertableDoc.selector = constructUpsertDocument(upsertFields, &document)
+			}
+
+			documents = append(documents, insertableDoc)
 		case <-mongoImport.tomb.Dying():
 			return nil
 		}
@@ -434,28 +454,20 @@ readLoop:
 
 	// ingest any documents left in slice
 	if len(documents) != 0 {
-		return mongoImport.ingester(documents, collection)
+		return mongoImport.insert(documents, collection)
 	}
 	return nil
 }
 
-// TODO: TOOLS-317: add tests/update this to be more efficient
 // handleUpsert upserts documents into the database - used if --upsert is passed
 // to mongoimport
-func (mongoImport *MongoImport) handleUpsert(documents []bson.Raw, collection *mgo.Collection) (numInserted int, err error) {
+func (mongoImport *MongoImport) handleUpsert(documents []insertableDoc, collection *mgo.Collection) (numInserted int, err error) {
 	stopOnError := mongoImport.IngestOptions.StopOnError
-	upsertFields := strings.Split(mongoImport.IngestOptions.UpsertFields, ",")
-	for _, rawBsonDocument := range documents {
-		document := bson.M{}
-		err = bson.Unmarshal(rawBsonDocument.Data, &document)
-		if err != nil {
-			return numInserted, fmt.Errorf("error unmarshaling document: %v", err)
-		}
-		selector := constructUpsertDocument(upsertFields, document)
-		if selector == nil {
-			err = collection.Insert(document)
+	for _, document := range documents {
+		if document.selector == nil {
+			err = collection.Insert(document.raw)
 		} else {
-			_, err = collection.Upsert(selector, document)
+			_, err = collection.Upsert(document.selector, document.raw)
 		}
 		if err == nil {
 			numInserted += 1
@@ -467,10 +479,10 @@ func (mongoImport *MongoImport) handleUpsert(documents []bson.Raw, collection *m
 	return numInserted, nil
 }
 
-// ingester performs the actual insertion/updates. If no upsert fields are
+// insert performs the actual insertion/updates. If no upsert fields are
 // present in the document to be inserted, it simply inserts the documents
 // into the given collection
-func (mongoImport *MongoImport) ingester(documents []bson.Raw, collection *mgo.Collection) (err error) {
+func (mongoImport *MongoImport) insert(documents []insertableDoc, collection *mgo.Collection) (err error) {
 	numInserted := 0
 	stopOnError := mongoImport.IngestOptions.StopOnError
 	maintainInsertionOrder := mongoImport.IngestOptions.MaintainInsertionOrder
@@ -490,7 +502,7 @@ func (mongoImport *MongoImport) ingester(documents []bson.Raw, collection *mgo.C
 		}
 		bulk := collection.Bulk()
 		for _, document := range documents {
-			bulk.Insert(document)
+			bulk.Insert(document.raw)
 		}
 		if !maintainInsertionOrder {
 			bulk.Unordered()

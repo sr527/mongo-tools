@@ -29,17 +29,19 @@ type ImportWorker struct {
 	processedDocumentChan chan bson.D
 }
 
-// constructUpsertDocument constructs a BSON document to use for upserts
-func constructUpsertDocument(upsertFields []string, document bson.M) bson.M {
-	upsertDocument := bson.M{}
-	var hasDocumentKey bool
-	for _, key := range upsertFields {
-		upsertDocument[key] = getUpsertValue(key, document)
-		if upsertDocument[key] != nil {
-			hasDocumentKey = true
+// constructUpsertDocument constructs a BSON document to use in upserts
+func constructUpsertDocument(upsertFields []string, document *bson.D) bson.D {
+	if len(upsertFields) == 0 || document == nil {
+		return nil
+	}
+	upsertDocument := bson.D{}
+	for _, keyName := range upsertFields {
+		keyValue := getNestedValue(keyName, document)
+		if keyValue != nil {
+			upsertDocument = append(upsertDocument, bson.DocElem{keyName, keyValue})
 		}
 	}
-	if !hasDocumentKey {
+	if len(upsertDocument) == 0 {
 		return nil
 	}
 	return upsertDocument
@@ -84,43 +86,6 @@ func doSequentialStreaming(workers []*ImportWorker, input chan ConvertibleDoc, o
 	}
 }
 
-// getParsedValue returns the appropriate concrete type for the given token
-// it first attempts to convert it to an int, if that doesn't succeed, it
-// attempts conversion to a float, if that doesn't succeed, it returns the
-// token as is.
-func getParsedValue(token string) interface{} {
-	parsedInt, err := strconv.Atoi(token)
-	if err == nil {
-		return parsedInt
-	}
-	parsedFloat, err := strconv.ParseFloat(token, 64)
-	if err == nil {
-		return parsedFloat
-	}
-	return token
-}
-
-// getUpsertValue takes a given BSON document and a given field, and returns the
-// field's associated value in the document. The field is specified using dot
-// notation for nested fields. e.g. "person.age" would return 34 would return
-// 34 in the document: bson.M{"person": bson.M{"age": 34}} whereas,
-// "person.name" would return nil
-func getUpsertValue(field string, document bson.M) interface{} {
-	index := strings.Index(field, ".")
-	if index == -1 {
-		return document[field]
-	}
-	left := field[0:index]
-	if document[left] == nil {
-		return nil
-	}
-	subDoc, ok := document[left].(bson.M)
-	if !ok {
-		return nil
-	}
-	return getUpsertValue(field[index+1:], subDoc)
-}
-
 // filterIngestError accepts a boolean indicating if a non-nil error should be,
 // returned as an actual error.
 //
@@ -146,6 +111,54 @@ func filterIngestError(stopOnError bool, err error) error {
 		return err
 	}
 	return nil
+}
+
+// getParsedValue returns the appropriate concrete type for the given token
+// it first attempts to convert it to an int, if that doesn't succeed, it
+// attempts conversion to a float, if that doesn't succeed, it returns the
+// token as is.
+func getParsedValue(token string) interface{} {
+	parsedInt, err := strconv.Atoi(token)
+	if err == nil {
+		return parsedInt
+	}
+	parsedFloat, err := strconv.ParseFloat(token, 64)
+	if err == nil {
+		return parsedFloat
+	}
+	return token
+}
+
+// getNestedValue takes a given field and bson.D document and returns the field's
+// associated value in the document. If the field is missing, it returns nil.
+// A field specified using dot notation e.g. "person.age", will return the value
+// of the "age" field in the "person" sub-document. e.g. passing "person.age" as
+// the field in the document: bson.D{bson.DocElem{"person", bson.DocElem{"age", 34}}
+// would return 34, whereas "person.name" would return nil
+func getNestedValue(field string, document *bson.D) interface{} {
+	index := strings.Index(field, ".")
+	if index == -1 {
+		fieldValue, err := bsonutil.FindValueByKey(field, document)
+		if err != nil { // no such key in the document
+			return nil
+		}
+		return fieldValue
+	}
+	dotPrefix := field[0:index]
+	fieldValue, err := bsonutil.FindValueByKey(dotPrefix, document)
+	if err != nil {
+		return nil
+	}
+	subDocument := bson.D{}
+	if fieldValue != nil {
+		docElem, ok := fieldValue.(bson.DocElem)
+		if !ok {
+			return nil
+		}
+		subDocument = append(subDocument, docElem)
+	}
+	dotSuffix := field[index+1:]
+	return getNestedValue(dotSuffix, &subDocument)
 }
 
 // removeBlankFields removes empty/blank fields in csv and tsv
